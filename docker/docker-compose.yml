@@ -1,0 +1,80 @@
+version: '$COMPOSER_VERSION'
+services:
+    nginx:
+        image: nginx:alpine
+        container_name: ${PREFIX}-${NGINX_CONTAINER}
+        volumes:
+            - ./docker/conf/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+            - ./docker/conf/nginx/default.conf:/etc/nginx/conf.d/default.conf
+            - ./docker/conf/nginx/default.template.conf:/etc/nginx/conf.d/default.template
+            - ./app:/app
+            - .env:/app/.env
+        ports:
+            - ${NGINX_EXT_PORT}:${NGINX_PORT}
+            - ${NGINX_SSL_EXT_PORT}:${NGINX_SSL_PORT}
+        environment:
+            - NGINX_HOST=${NGINX_HOST}
+        command: /bin/sh -c "envsubst '$$NGINX_HOST' < /etc/nginx/conf.d/default.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"
+        restart: always
+        working_dir: /app
+        env_file:
+            - .env
+        depends_on:
+            - php
+            - db
+        networks:
+            - matveev-network
+
+    php:
+        build:
+            context: ./app
+            dockerfile: ../docker/php/Dockerfile
+        container_name: ${PREFIX}-${PHP_CONTAINER}
+        restart: always
+        volumes:
+            - ./app:/app
+            - ./docker/conf/php/php.ini-production:/usr/local/etc/php/php.ini-production
+            - ./docker/conf/php/php.ini-development:/usr/local/etc/php/php.ini-development
+            - ./docker/conf/php-fpm/www.conf:/usr/local/etc/php-fpm.d/www.conf
+            - .env:/app/.env
+        working_dir: /app
+        networks:
+            - matveev-network
+        env_file:
+            - ./.env
+        depends_on:
+            db:
+                condition: service_healthy
+
+    db:
+        image: mysql:8
+        container_name: ${PREFIX}-${DB_CONTAINER}
+        environment:
+            MYSQL_USER: ${DB_USER}
+            MYSQL_PASSWORD: ${DB_PASSWORD}
+            MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+            MYSQL_DATABASE: ${DB_NAME}
+            TZ: ${DB_TZ}
+        healthcheck:
+            #test: ["CMD-SHELL", "mysqladmin --host=localhost -P $$DB_PORT --user=$$DB_USER --password=$$DB_PASSWORD ping"]
+            test: ["CMD-SHELL", "mysql --host=localhost -P $$DB_PORT --user=$$DB_USER --password=$$DB_PASSWORD -e 'SELECT 1'"]
+            interval: 5s
+            timeout: 5s
+            retries: 20
+        volumes:
+            - ./data/mysql:${DB_DATA}
+            - .env:/app/.env
+        restart: always
+        env_file:
+            - ./.env
+        ports:
+            - ${DB_EXT_PORT}:${DB_PORT}
+        networks:
+            - matveev-network
+networks:
+    matveev-network:
+        driver: bridge
+        ipam:
+            config:
+            - subnet: "${SUBNET_IP}/${SUBNET_MASK}"
+              gateway: ${GATEWAY}
